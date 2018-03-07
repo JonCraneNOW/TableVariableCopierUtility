@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<database>
+    <element label="Table Variable Copier Configuration" max_length="40" name="x_snc_tbl_vbl_copy_table_variable_copier_configuration" type="collection">
+        <element label="Active" max_length="40" name="active" type="boolean"/>
+        <element attributes="base_table=task" label="Child task table" max_length="80" name="child_task_table" type="table_name"/>
+        <element label="Copier Business Rule" max_length="32" name="copier_business_rule" reference="sys_script" type="reference"/>
+        <element attributes="base_table=task" label="Parent task table" max_length="80" name="parent_task_table" type="table_name"/>
+        <index name="index">
+            <element name="copier_business_rule"/>
+        </index>
+    </element>
+</database>

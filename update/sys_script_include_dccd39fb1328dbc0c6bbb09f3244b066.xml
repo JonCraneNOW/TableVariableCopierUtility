@@ -1,0 +1,220 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<record_update table="sys_script_include">
+    <sys_script_include action="INSERT_OR_UPDATE">
+        <access>package_private</access>
+        <active>true</active>
+        <api_name>x_snc_tbl_vbl_copy.TableVariableCopier</api_name>
+        <caller_access/>
+        <client_callable>false</client_callable>
+        <description/>
+        <name>TableVariableCopier</name>
+        <script><![CDATA[var TableVariableCopier = Class.create();
+TableVariableCopier.prototype = {
+	initialize: function() {
+	},
+
+	copy : function(parent, child, skipValidation) {
+		if (!skipValidation)
+			if (!this.validated(parent, child)) return;
+
+		var qaParent = new GlideRecord('question_answer');
+		qaParent.addQuery('table_name', parent.getTableName());
+		qaParent.addQuery('table_sys_id', parent.getUniqueValue());
+		qaParent.query();
+
+		while(qaParent.next()) {
+			var qaChild = new GlideRecord('question_answer');
+			qaChild.initialize();
+			qaChild.table_name = child.getTableName();
+			qaChild.table_sys_id = child.getUniqueValue();
+			qaChild.question = qaParent.question;
+			qaChild.value = qaParent.value;
+			qaChild.order = qaParent.order;
+			qaChild.insert();
+		}
+	},
+
+	copyToAllChildren : function(parent) {
+		/*
+		Copy all variables on a parent GR to all child task GRs.
+		*/
+
+		var childTables = this.getAllChildrenConfigsForParent(parent.getTableName());
+
+		if (!childTables || childTables == []) {
+			gs.info("Cannot copy to children - no child table configs for parent.");
+			return;
+		}
+
+		for (var i = 0; i < childTables.length; i++) {
+			var gr = new GlideRecord(childTables[i]);
+			gr.addQuery('parent', parent.getUniqueValue());
+			gr.query();
+
+			while (gr.next()) {
+				this.copy(parent, gr);
+			}
+		}
+
+	},
+
+	updateVariableOnRelatedRecords : function(variable) {
+		/*
+		Take the variable passed into the function and update the same variable on the parent task and sibling tasks
+        */
+
+		if (!variable) return; //oops!
+
+		var variableTask = new GlideRecord(variable.table_name);
+		variableTask.get(variable.table_sys_id);
+
+		var childTables = this.getAllChildrenConfigsForParent(variableTask.getTableName());
+		var parentTables = this.getAllParentConfigsForChild(variableTask.getTableName());
+
+		if (childTables && childTables.length > 0) {
+			for (var i = 0; i < childTables.length; i++) {
+
+				var gr = new GlideRecord(childTables[i]);
+				gr.addQuery('parent', variableTask.getUniqueValue());
+				gr.query();
+
+				while (gr.next()) {
+					var qa = new GlideRecord('question_answer');
+					qa.addQuery('table_name', gr.getTableName());
+					qa.addQuery('table_sys_id', gr.getUniqueValue());
+					qa.addQuery('question', variable.question);
+					qa.query();
+
+					if (qa.next()) {
+						qa.value = variable.value;
+						qa.update();
+					}
+				}
+			}
+		}
+
+		if (parentTables && parentTables.length > 0) {
+			if (parentTables.indexOf(variableTask.parent.getRefRecord().getTableName()) >= 0) {
+				var qa = new GlideRecord('question_answer');
+				qa.addQuery('table_name', variableTask.parent.getRefRecord().getTableName());
+				qa.addQuery('table_sys_id', variableTask.parent.getRefRecord().getUniqueValue());
+				qa.addQuery('question', variable.question);
+				qa.query();
+
+				if (qa.next()) {
+					qa.value = variable.value;
+					qa.update();
+
+				}
+				
+				var childTablesForParent = this.getAllChildrenConfigsForParent(variableTask.parent.getRefRecord().getTableName());
+
+				for (var i = 0; i < childTablesForParent.length; i++) {
+					var gr = new GlideRecord(childTablesForParent[i]);
+					gr.addQuery('parent', variableTask.parent.getRefRecord().getUniqueValue());
+					gr.addQuery('sys_id', '!=', variableTask.sys_id);
+					gr.query();
+
+					while (gr.next()) {
+						var qa = new GlideRecord('question_answer');
+						qa.addQuery('table_name', gr.getTableName());
+						qa.addQuery('table_sys_id', gr.getUniqueValue());
+						qa.addQuery('question', variable.question);
+						qa.query();
+
+						if (qa.next()) {
+							qa.value = variable.value;
+							qa.update();
+						}
+					}
+
+				}
+			}
+		}
+	},
+
+	doesConfigRecordExist : function(parent, child) {
+		/*
+		Checks if a Configuration record exists for both tables. 
+        */
+
+
+		var config = new GlideRecord('x_snc_tbl_vbl_copy_table_variable_copier_configuration');
+		config.addQuery('parent_task_table', parent.getTableName());
+		config.addQuery('child_task_table', child.getTableName());
+		config.addQuery('active', true);
+		config.query();
+
+		return config.hasNext();
+	},
+
+	validated : function(parent, child) {
+		/*
+		Perform a series of validation steps before copying.
+		1) Was a parent and child GR supplied to the constructor?
+		2) Does a config record exist? If not, abort. We shouldn't be copying across these tables.
+
+		If the answer to both is Yes, then copy. Otherwise, bail.
+		*/
+
+		if (!parent || !child) {
+			gs.info("Unable to copy. No Parent or Child specified in the constructor");
+			return false;
+		}
+
+		if (!this.doesConfigRecordExist(parent, child)) {
+			gs.info("No configuration record exists for the parent and child tables. Create one in the Table Variable Copier Configuration table.");
+			return false;			
+		}
+
+		return true;
+	},
+
+	getAllChildrenConfigsForParent : function(parentTable) {
+		var childTables = [];
+
+		var config = new GlideRecord('x_snc_tbl_vbl_copy_table_variable_copier_configuration');
+		config.addQuery('parent_task_table', parentTable);
+		config.addQuery('active', true);
+		config.query();
+
+		while (config.next()) {
+			childTables.push(config.child_task_table + '');
+		}
+
+		return childTables;
+	},
+
+	getAllParentConfigsForChild : function(childTable) {
+		var parentTables = [];
+
+		var config = new GlideRecord('x_snc_tbl_vbl_copy_table_variable_copier_configuration');
+		config.addQuery('child_task_table', childTable);
+		config.addQuery('active', true);
+		config.query();
+
+		while (config.next()) {
+			parentTables.push(config.parent_task_table + '');
+		}
+
+		return parentTables;
+	},
+
+	type: 'TableVariableCopier'
+};]]></script>
+        <sys_class_name>sys_script_include</sys_class_name>
+        <sys_created_by>admin</sys_created_by>
+        <sys_created_on>2018-03-06 19:43:14</sys_created_on>
+        <sys_customer_update>false</sys_customer_update>
+        <sys_id>dccd39fb1328dbc0c6bbb09f3244b066</sys_id>
+        <sys_mod_count>34</sys_mod_count>
+        <sys_name>TableVariableCopier</sys_name>
+        <sys_package display_value="Table Variable Copier" source="x_snc_tbl_vbl_copy">0a8a353f13e4dbc0c6bbb09f3244b08f</sys_package>
+        <sys_policy>read</sys_policy>
+        <sys_replace_on_upgrade>false</sys_replace_on_upgrade>
+        <sys_scope display_value="Table Variable Copier">0a8a353f13e4dbc0c6bbb09f3244b08f</sys_scope>
+        <sys_update_name>sys_script_include_dccd39fb1328dbc0c6bbb09f3244b066</sys_update_name>
+        <sys_updated_by>admin</sys_updated_by>
+        <sys_updated_on>2018-03-07 19:44:12</sys_updated_on>
+    </sys_script_include>
+</record_update>
